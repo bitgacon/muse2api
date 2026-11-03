@@ -1,0 +1,67 @@
+name: Build Windows portable release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-release.yml'
+      - 'scripts/build_windows.py'
+      - 'version.json'
+permissions:
+  contents: write
+concurrency:
+  group: windows-portable-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements-standalone.txt
+            requirements-gui.txt
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-standalone.txt -r requirements-gui.txt pyinstaller==6.22.0
+      - name: Offline delivery and API regressions
+        shell: pwsh
+        run: |
+          $tests = @('test_delivery_regressions.py','test_video_late_attachment.py','test_studio_chat.py','test_async_images.py','test_generation_tools.py','test_generation_modes.py','test_account_workflows.py')
+          foreach ($test in $tests) {
+            python "tests/$test"
+            if ($LASTEXITCODE -ne 0) { throw "Failed $test" }
+          }
+      - name: Build and smoke-test actual Windows EXE
+        run: python scripts/build_windows.py
+      - name: Retain build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muse2API-Windows-portable
+          path: release/*
+          if-no-files-found: error
+      - name: Publish versioned release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content version.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          @"
+          Windows x64 portable build from commit $env:GITHUB_SHA.
+
+          Download Muse2API_VI_Portable_$version.zip, extract all files, then open Muse2API_Studio.exe. No Python installation required. Chrome/Edge and Internet are required.
+
+          Upgrade: stop the old GUI/service, keep a backup, then copy your .env and data into the newly extracted folder. Keep _internal beside the EXE. Reload the included cookie extension 1.0.2 if needed.
+
+          Fixes: workspace readiness, unconfirmed delivery errors, delayed video attachments in chat/generation and optional workspace cookies. Verified offline regressions and actual frozen Windows GUI/API startup/shutdown. Live Muse generation was not tested with a user account.
+          "@ | Set-Content release-notes.md -Encoding utf8
+          gh release create $tag release/* --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Muse2API Studio $version — Windows Portable" --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed; build artifacts are retained above.' }
