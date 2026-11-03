@@ -34,6 +34,7 @@ jobs:
       - name: Offline delivery and API regressions
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Path work -Force | Out-Null
           $tests = @('test_delivery_regressions.py','test_video_late_attachment.py','test_studio_chat.py','test_async_images.py','test_generation_tools.py','test_generation_modes.py','test_account_workflows.py')
           foreach ($test in $tests) {
             python "tests/$test"
