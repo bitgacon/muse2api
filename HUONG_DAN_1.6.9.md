@@ -22,10 +22,10 @@
 6. Thay extension bằng bản 1.0.2 trong ZIP đi kèm, hoặc Reload extension unpacked từ thư mục muse2api-extension/muse2api-extension.
 7. Mở Muse trên trình duyệt, kiểm tra chat website hoạt động, rồi nhập lại cookie nếu phiên cũ không dùng được. Kiểm tra 1 chat ngắn và 1 video trước khi chạy hàng loạt.
 
-EXE portable 1.6.8 chứa Python engine đã đóng gói. File .py ngoài EXE không thay thế engine đó. Bản này cung cấp source 1.6.9; chưa phát hành EXE Windows mới. BUILD.txt mô tả cách build lại khi cần.
+EXE portable 1.6.8 chứa Python engine đã đóng gói. File .py ngoài EXE không thay thế engine đó. Bản portable 1.6.9 đã được build và phát hành tại https://github.com/bitgacon/muse2api/releases/tag/v1.6.9. Dùng ZIP đầy đủ, giải nén vào thư mục mới rồi chuyển .env/data sau khi tắt bản cũ. Không cần cài Python cho portable. BUILD.txt và scripts/build_windows.py mô tả quy trình build.
 
 ## Kiểm tra
 
 Kiểm tra offline bằng engine/DOM giả lập: readiness, dọn page thất bại, video đến muộn 31 tình huống, chat chờ video 15/30/60s, giao tin chưa xác nhận, yêu cầu cookie và ZIP extension. Kiểm tra hồi quy API ảnh, chat theo thread/tài khoản, reference/ordering và chuỗi 20 cảnh.
 
-Không có tài khoản Muse thật trong phiên sửa: chưa xác nhận end-to-end với website/tài khoản của người dùng. Kiểm tra Chrome thật bị giới hạn vì môi trường không có Chrome/Edge. Các sửa dựa trên lỗi code tái hiện được và regression upstream; chưa thể khẳng định mọi nguyên nhân trên máy người dùng đã được loại trừ.
+Không có tài khoản Muse thật trong phiên sửa: chưa xác nhận end-to-end với website/tài khoản của người dùng. EXE đã qua kiểm tra GUI/API khởi động và dừng trên Windows GitHub Actions (run 41607647995); báo cáo QA_PORTABLE_1.6.9.json và SHA256SUMS.txt có trong Release. Kiểm tra browser/Muse có tài khoản thật vẫn chưa được thực hiện. Các sửa dựa trên lỗi code tái hiện được và regression upstream; chưa thể khẳng định mọi nguyên nhân trên máy người dùng đã được loại trừ.

@@ -4,18 +4,20 @@ Bản sửa **1.6.9** cập nhật engine từ các sửa liên quan của upstr
 [`1cd0168`](https://github.com/czg86389-hub/muse2api/commit/1cd01682533dbf2c015fa879a8dc09534b50b4a3).
 Xem [nội dung sửa và cách cập nhật](HUONG_DAN_1.6.9.md).
 
-**Chạy bản sửa từ source trên Windows:** tải [ZIP source nhánh main](https://github.com/bitgacon/muse2api/archive/refs/heads/main.zip), giải nén vào thư mục mới, chạy `01_CAI_DAT.bat`, rồi `05_MO_GUI.bat` (GUI) hoặc `02_CHAY_MUSE2API.bat` (web/API). Cần Python 3.11/3.12 và Chrome/Edge.
-Chỉ chép `.env` và thư mục `data` từ bản đang dùng sau khi tắt dịch vụ cũ. Không chạy đồng thời hai bản cùng cổng.
-**EXE portable 1.6.8 vẫn chứa engine cũ**: muốn dùng bản sửa qua EXE cần build lại từ source 1.6.9; không chép vài file `.py` rồi tiếp tục mở EXE cũ.
+**Bản EXE portable 1.6.9 đã phát hành:** [Tải ZIP Windows x64](https://github.com/bitgacon/muse2api/releases/download/v1.6.9/Muse2API_VI_Portable_1.6.9.zip) · [Release và SHA256](https://github.com/bitgacon/muse2api/releases/tag/v1.6.9).
+Giải nén toàn bộ vào thư mục mới và mở `Muse2API_Studio.exe`; không cần cài Python. Bản EXE đã qua kiểm tra GUI/API trên Windows trong [GitHub Actions](https://github.com/bitgacon/muse2api/actions/runs/41607647995).
+Cập nhật: tắt phiên cũ, sao lưu rồi chép `.env` và thư mục `data` sang bản mới. Giữ `_internal` bên cạnh EXE. Không chạy đồng thời hai bản cùng cổng.
+
+Nếu muốn chạy source, tải ZIP nhánh main, chạy `01_CAI_DAT.bat` rồi `05_MO_GUI.bat` hoặc `02_CHAY_MUSE2API.bat` (cần Python 3.11/3.12 và Chrome/Edge).
 
 
 Ứng dụng tiếng Việt cho Windows: tạo ảnh/video, chat Muse và điều khiển qua Telegram.
 
 ## Tải bản Windows không cần Python
 
-Bản EXE portable cũ: [Release v1.6.8](https://github.com/bitgacon/muse2api/releases/tag/v1.6.8).
-- **Muse2API_VI_Portable_1.6.8.zip**: bản đầy đủ, giải nén toàn bộ rồi mở `Muse2API_Studio.exe` hoặc `05_MO_GUI.bat`.
-- **Muse2API_Update_1.6.7_to_1.6.8.zip**: cập nhật bản portable 1.6.7. Chờ tác vụ xong, dừng dịch vụ và đóng GUI/CMD, giải nén chép đè; giữ nguyên `.env` và `data`.
+Bản hiện tại: [Release v1.6.9](https://github.com/bitgacon/muse2api/releases/tag/v1.6.9).
+- **Muse2API_VI_Portable_1.6.9.zip**: bản đầy đủ, giải nén toàn bộ rồi mở `Muse2API_Studio.exe` hoặc `05_MO_GUI.bat`.
+- Bản cũ 1.6.8 vẫn có trong Releases để hoàn tác. Khi nâng cấp hãy dùng ZIP đầy đủ 1.6.9 ở thư mục mới và chuyển `.env`/`data`.
 
 Giữ thư mục `_internal` bên cạnh EXE. Máy cần Windows 10/11 x64, Chrome hoặc Edge và kết nối Internet. Không cần cài Python cho bản portable.
 
