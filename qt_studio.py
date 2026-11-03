@@ -312,7 +312,7 @@ class StudioWindow(QMainWindow, core.DesktopStudio):
         self.history_path = core.ROOT / 'data' / 'desktop_chat.json'
         try: self.messages = json.loads(self.history_path.read_text('utf-8')) if self.history_path.exists() else []
         except (ValueError, OSError): self.messages = []
-        self.setWindowTitle('Muse2API 1.6.8 · Studio desktop'); self.resize(1280, 900); self.setMinimumSize(1020, 760)
+        self.setWindowTitle('Muse2API 1.6.9 · Studio desktop'); self.resize(1280, 900); self.setMinimumSize(1020, 760)
         screen=QApplication.primaryScreen()
         if screen and QApplication.platformName()!='offscreen':
             area=screen.availableGeometry()

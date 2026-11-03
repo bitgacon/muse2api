@@ -2,7 +2,8 @@
 
 const $ = (id) => document.getElementById(id);
 const STORE = 'muse2api_ext_cfg';
-const ESSENTIAL = ['hatch_sess', 'hatch_gw', 'hatch_vml', 'hatch_native_auth_device'];
+const ESSENTIAL = ['hatch_sess'];
+// Workspace cookies are optional and can be issued after login.
 
 function log(message, cls) {
   const el = $('log');

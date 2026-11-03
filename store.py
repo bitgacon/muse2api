@@ -11,8 +11,7 @@ import uuid
 _LOCK = threading.Lock()
 
 # 决定账号生死的核心 cookie（与 engine.ESSENTIAL_COOKIES 保持一致）
-ESSENTIAL_COOKIES = ("hatch_sess", "hatch_gw", "hatch_vml",
-                     "hatch_native_auth_device")
+ESSENTIAL_COOKIES = ("hatch_sess",)
 
 
 def _is_pos(v) -> bool:

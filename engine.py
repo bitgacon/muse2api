@@ -28,8 +28,7 @@ log = logging.getLogger("muse2api")
 ATT_SEL = '[data-testid^="hatch-chat-attachment-presentation-"]'
 
 # 决定账号生死的核心 cookie（缺失或过期 = 会话失效）
-ESSENTIAL_COOKIES = ("hatch_sess", "hatch_gw", "hatch_vml",
-                     "hatch_native_auth_device")
+ESSENTIAL_COOKIES = ("hatch_sess",)
 
 
 class MuseAuthError(RuntimeError):
@@ -38,6 +37,10 @@ class MuseAuthError(RuntimeError):
 
 class MuseGenerationError(RuntimeError):
     pass
+
+
+class MuseModelRefusalError(MuseGenerationError):
+    """Muse explicitly refused the requested media."""
 
 
 class MuseEngine:
@@ -267,6 +270,7 @@ class MuseEngine:
         vm_id = sj.get("vm_id")
         vm_state = sj.get("vm_state")
         wake_ok = False
+        wake_requested = False
         if wake_vm and vm_id and vm_state != "DISABLED":
             try:
                 headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cur_cookies.items() if v)
@@ -275,7 +279,15 @@ class MuseEngine:
                     "retry_count": 0,
                     "connect_attempt_id": str(uuid.uuid4()),
                 }, timeout=8)
-                wake_ok = rw.status_code == 200
+                wake_requested = rw.status_code == 200
+                if wake_requested:
+                    verify = requests.get("https://muse.ai/api/session", headers=headers,
+                                          timeout=12, allow_redirects=False)
+                    if verify.status_code == 200:
+                        verified = verify.json()
+                        if isinstance(verified, dict) and verified.get("status") == "assigned":
+                            vm_state = verified.get("vm_state") or vm_state
+                            wake_ok = vm_state == "RUNNING"
             except Exception:
                 pass
         return {
@@ -284,6 +296,7 @@ class MuseEngine:
             "vm_id": vm_id,
             "vm_state": vm_state,
             "wake_ok": wake_ok,
+            "wake_requested": wake_requested,
             "cookies": cur_cookies,
             "cookies_exp": cur_exp,
         }
@@ -355,13 +368,15 @@ class MuseEngine:
                     if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
                     var b = document.body ? (document.body.innerText || '') : '';
                     if (b.indexOf('Connecting...') !== -1) return 'connecting';
+                    // Empty composers may not render Send until text has been entered.
+                    if (document.querySelector('textarea').disabled) return 'input-disabled';
                     return 'ready';
                 })()""")
                 if st == "ready":
                     return True
             except Exception:
                 pass
-            time.sleep(0.08)
+            time.sleep(0.1)
         return False
 
     def reset_thread(self, for_chat: bool = False):
@@ -409,7 +424,7 @@ class MuseEngine:
     def ensure_page(self, cookies: dict, expires: dict | None = None, account_id: str | None = None):
         if self.page is not None and (account_id is None or getattr(self, "current_acc_id", None) == account_id):
             try:
-                if self.page.js("!!document.querySelector('textarea')"):
+                if self.page.js("!!document.querySelector('textarea')") and self._wait_ws_ready(self.page, timeout=8.0):
                     return self.page
             except Exception:
                 pass
@@ -435,32 +450,19 @@ class MuseEngine:
                 log.warning("预续签 /api/session 失败（继续尝试浏览器加载）: %s", e)
 
         page = self._open_page()
+        self.page = page  # Own the page even when hydration/connection fails.
         self._apply_cookies(page, cookies, expires)
         page.send("Page.navigate", {"url": "https://muse.ai/thread/new"})
-        for _ in range(self.cfg.login_wait * 2):
-            time.sleep(0.15)
-            try:
-                if page.js("!!document.querySelector('textarea')"):
-                    self.page = page
-                    self.current_acc_id = account_id
-                    self._wait_ws_ready(page, timeout=15.0)
-                    return page
-            except Exception:
-                pass
+        if self._wait_ws_ready(page, timeout=self.cfg.login_wait):
+            self.current_acc_id = account_id
+            return page
         try:
-            if page.js("!!document.querySelector('textarea')"):
-                self.page = page
-                self.current_acc_id = account_id
-                self._wait_ws_ready(page, timeout=15.0)
-                return page
-        except Exception:  # noqa: BLE001
-            pass
-        # 区分「会话失效（被踢回登录页）」和「页面加载卡住」，错误提示才能对症
-        try:
-            body = (page.js("document.body.innerText.slice(0,1200)") or "").lower()
-        except Exception:  # noqa: BLE001
+            body = (page.js("document.body ? document.body.innerText.slice(0,1200) : ''") or "").lower()
+        except Exception:
             body = ""
         self._close_page()
+        if "connecting..." in body:
+            raise MuseGenerationError("Muse chưa kết nối được workspace (Connecting...). Kiểm tra Muse trên trình duyệt và nhập lại cookie nếu cần.")
         if re.search(r"log in|sign in|create an account|登录|use another account", body):
             raise MuseAuthError("会话已被 muse.ai 登出（可能被其它登录挤掉或触发风控），"
                                 "请用浏览器扩展重新导入 cookie")
@@ -630,6 +632,8 @@ class MuseEngine:
     )
 
     def _send(self, prompt: str):
+        if not self._wait_ws_ready(self.page, timeout=self.cfg.login_wait):
+            raise MuseGenerationError("Muse chưa sẵn sàng nhận tin nhắn (Connecting / đang tải workspace). Prompt chưa được gửi.")
         # 1. 确保 textarea 滚动到视口中央并获得真实焦点
         try:
             self.page.js("""(function(){
@@ -744,6 +748,11 @@ class MuseEngine:
         t_start = time.time()
         stable_src, stable_n = "", 0
         last_txt, txt_stable = "", 0
+        refusal_last, refusal_stable = "", 0
+        seen_stop = False
+        previous_state = None
+        last_activity = t_start
+        progress_sent = 0
         while time.time() < deadline:
             if stop_event is not None and stop_event.is_set():
                 raise MuseGenerationError("客户端已断开连接，终止生成任务")
@@ -795,12 +804,10 @@ class MuseEngine:
                     if stable_n >= 1:
                         return att
             elapsed = time.time() - t_start
-            if on_progress:
-                prog = min(92, int(25 + elapsed * 1.0))
-                try:
-                    on_progress(prog)
-                except Exception:
-                    pass
+            cur_cnt = base_agent_cnt
+            cur_txt = ""
+            has_stop = False
+            tail = ""
             try:
                 st_raw = self.page.js("""(function(){
                     var bs=[].slice.call(document.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]'))
@@ -809,36 +816,136 @@ class MuseEngine:
                     var hasStop = !!(document.querySelector('[data-testid="hatch-composer-stop-button"]')
                         || document.querySelector('button[aria-label*="Stop" i]')
                         || document.querySelector('button[aria-label*="停止"]'));
-                    var tail = document.body ? (document.body.innerText||'').slice(-700) : '';
-                    return JSON.stringify({cnt: bs.length, txt: lastTxt, stop: hasStop, tail: tail});
+                    var tail = document.body ? (document.body.innerText||'').slice(-1200) : '';
+                    return JSON.stringify({cnt: bs.length, txt: lastTxt, stop: hasStop, tail: tail,
+                        path: location.pathname || '', href: location.href || ''});
                 })()""")
                 st = json.loads(st_raw) if st_raw else {}
             except Exception:
                 st = {}
             tail = st.get("tail") or ""
-            if re.search(r"额度不足|积分不足|out of credits|达到上限|token limit", tail):
-                raise MuseGenerationError("账号额度不足")
-            # Sidebar/stale connection text does not prove this generation failed.
-            # The caller's generation deadline remains the bounded timeout.
-            # 快速失败：如果助手已经完成了纯文字回复（无 Stop 按钮且无新附件），且并非正在生成媒体的报告
-            cur_cnt = st.get("cnt") or 0
+            cur_cnt = int(st.get("cnt") or 0)
             cur_txt = st.get("txt") or ""
             has_stop = bool(st.get("stop"))
+            path = st.get("path") or ""
+            seen_stop = seen_stop or has_stop
+            state = (cur_cnt, cur_txt, len(atts), has_stop, path)
+            if previous_state is None or state != previous_state:
+                last_activity = time.time()
+                previous_state = state
+
+            if on_progress:
+                milestone = 25 if seen_stop else 20
+                if cur_cnt > base_agent_cnt:
+                    milestone = 40
+                if milestone > progress_sent:
+                    try:
+                        on_progress(milestone)
+                        progress_sent = milestone
+                    except Exception:
+                        pass
+
+            if re.search(r"额度不足|积分不足|out of credits|达到上限|token limit", tail, re.I):
+                raise MuseGenerationError("账号额度不足")
+            # A Stop button is also shown for messages never acknowledged by the gateway.
+            if elapsed > 30.0 and cur_cnt == base_agent_cnt and re.search(
+                    r"Still sending|Delivery not confirmed|正在发送|未确认送达", tail, re.I):
+                raise MuseGenerationError(
+                    "提示词未成功送达后端（Still sending / Delivery not confirmed），终止等待并重试")
+
+            refusal_source = cur_txt if cur_cnt > base_agent_cnt else (
+                tail if seen_stop and not has_stop and elapsed > 20.0 else "")
+            refusal = self._media_refusal_text(refusal_source, expect)
+            if refusal and not has_stop and len(atts) <= base_att_cnt:
+                if refusal == refusal_last:
+                    refusal_stable += 1
+                else:
+                    refusal_last, refusal_stable = refusal, 0
+                if refusal_stable >= 4 and elapsed > 8.0:
+                    raise MuseModelRefusalError(f"模型未生成媒体，仅返回文本: {refusal}")
+            else:
+                refusal_last, refusal_stable = "", 0
+
             if cur_cnt > base_agent_cnt and cur_txt and not has_stop and len(atts) <= base_att_cnt:
-                # 检查是否包含媒体文件生成关键词（如 .webp, .png, .mp4, imagine_media 等），若是则说明正在产出媒体，绝不能误判为纯文本拒答
-                is_media_report = bool(re.search(r"\.(?:webp|png|jpe?g|mp4|webm)|imagine_media|deliverable|generated\s+.*image|verified\s+generated|artifact", cur_txt, re.I))
+                # Media-status text can precede a real attachment; do not fail on it.
+                is_media_report = self._media_status_pending(cur_txt)
                 if not is_media_report:
                     if cur_txt == last_txt:
                         txt_stable += 1
                     else:
                         last_txt, txt_stable = cur_txt, 0
                     if txt_stable >= 15 and elapsed > 8.0:
-                        raise MuseGenerationError(f"模型未生成媒体，仅返回文本: {cur_txt[:120]}")
+                        clean = self._clean_model_text(cur_txt)
+                        raise MuseModelRefusalError(
+                            f"模型未生成媒体，仅返回文本: {clean}")
                 else:
                     txt_stable = 0
             else:
                 txt_stable = 0
+
+            # Muse accepted the click but never created a thread. Requiring a completed
+            # Stop-button lifecycle, an idle page, no messages/attachments and /thread/new
+            # avoids treating ordinary long video rendering as failure.
+            if (expect == "video" and seen_stop and not has_stop
+                    and path.rstrip("/").endswith("/thread/new")
+                    and cur_cnt <= base_agent_cnt and len(atts) <= base_att_cnt
+                    and elapsed >= 180.0 and time.time() - last_activity >= 90.0):
+                raise MuseGenerationError(
+                    "Muse 未建立视频任务线程，页面在提交结束后持续无响应（已提前停止等待）")
         return None
+
+    @staticmethod
+    def _clean_model_text(text: str, limit: int = 240) -> str:
+        clean = re.sub(r"\s+", " ", text or "").strip()
+        return clean[:limit]
+
+    @staticmethod
+    def _media_status_pending(text: str) -> bool:
+        """A success claim can precede an attachment; it is never delivery proof."""
+        if re.search(
+                r"(?:未|没(?:有)?|无法|不能|未能)[^。！？!?\n]{0,16}(?:生成|制作|提供|完成)|"
+                r"(?:生成|制作|渲染|处理)[^。！？!?\n]{0,12}(?:失败|未成功)|"
+                r"\b(?:not|never|hasn['’]t|wasn['’]t|isn['’]t)\s+(?:(?:be|been|successfully)\s+){0,3}"
+                r"(?:generated|created|completed|ready)|"
+                r"\b(?:no|without)\s+(?:video|clip|image|picture|animation)\b"
+                r"[^.\n]{0,60}\b(?:generated|created|ready)|"
+                r"\b(?:failed|cannot|can['’]t|could not|couldn['’]t|unable to)\b"
+                r"[^.\n]{0,60}\b(?:generat(?:e|ed|ing)|creat(?:e|ed|ing)|render|provide|video|image)\b|"
+                r"\b(?:video|image|render|upload)\b[^.\n]{0,32}\bfailed\b",
+                text, re.I):
+            return False
+        return bool(re.search(
+            r"\.(?:webp|png|jpe?g|mp4|webm)|imagine_media|deliverable|"
+            r"generated\s+.*image|verified\s+generated|artifact|"
+            r"^(?:已(?:经)?(?:成功)?生成|生成好了|生成完毕|已完成|做好了)(?:[，。！\s]|$)|"
+            r"(?:视频|影片|短片|图片|图像)[^。！？!?\n]{0,40}"
+            r"(?:已(?:经)?(?:成功)?生成|生成(?:成功|好了|完毕|完成)|已(?:经)?完成|做好了)|"
+            r"(?:已(?:经)?(?:成功)?生成|生成好了|生成完毕|已完成|做好了)"
+            r"[^。！？!?\n]{0,32}(?:视频|影片|短片|图片|图像)|"
+            r"\b(?:video|clip|image|picture|animation)\b[^.\n]{0,60}"
+            r"\b(?:generated|created|rendered|completed|ready)\b|"
+            r"\b(?:generated|created|rendered|completed)\b[^.\n]{0,32}"
+            r"\b(?:video|clip|image|picture|animation)\b", text, re.I))
+
+    @classmethod
+    def _media_refusal_text(cls, text: str, expect: str) -> str:
+        """Return only an explicit media refusal line, never an arbitrary page tail."""
+        if not text:
+            return ""
+        patterns = [
+            r"^(?:没生成成|视频没生成成功|视频未生成成功|视频生成失败)[^\n]{0,240}"
+            r"(?:国家|地区|country|region)[^\n]{0,160}(?:不支持|不可用|无法|not available|unavailable|not supported)",
+            r"^(?:could not|couldn't|cannot|can't|unable to)[^\n]{0,120}video[^\n]{0,160}"
+            r"(?:country|region|not available|unavailable|not supported)",
+        ] if expect == "video" else [
+            r"^(?:图片没生成成功|图片未生成成功|图片生成失败|无法生成图片)",
+            r"^(?:could not|couldn't|cannot|can't|unable to)[^\n]{0,120}image",
+        ]
+        for line in reversed((text or "").splitlines()):
+            clean = cls._clean_model_text(line)
+            if clean and any(re.search(pattern, clean, re.I) for pattern in patterns):
+                return clean
+        return ""
 
     # ---------------- 取字节 ----------------
     _EXTRACT_JS = r"""
@@ -956,7 +1063,8 @@ class MuseEngine:
                     break
             else:
                 raise MuseGenerationError("Không mở lại được hội thoại Muse")
-            self._wait_ws_ready(self.page)
+            if not self._wait_ws_ready(self.page):
+                raise MuseGenerationError("Không kết nối được hội thoại Muse; chưa gửi prompt")
             self._scroll_bottom()
             # Let the resumed transcript mount before taking the baseline; an
             # old answer arriving late must not count as the new reply.
@@ -988,6 +1096,10 @@ class MuseEngine:
             time.sleep(0.15)
             count, current, has_stop = self._poll_chat()
             now = time.monotonic()
+            if now - started > 30 and count <= base_agent:
+                tail = self.page.js("document.body ? (document.body.innerText || '').slice(-1200) : ''") or ''
+                if re.search(r"Still sending|Delivery not confirmed|正在发送|未确认送达", tail, re.I):
+                    raise MuseGenerationError("Muse chưa xác nhận nhận tin nhắn (Still sending / Delivery not confirmed). Kiểm tra hội thoại Muse trước khi gửi lại.")
             fresh_media = []
             waiting_media = False
             if on_result:
@@ -998,6 +1110,9 @@ class MuseEngine:
                         if att.get("src") not in baseline_media: waiting_media = True
                         continue
                     if src and src not in baseline_media: fresh_media.append((att, kind))
+                # A success message is not a delivered file. Wait for the real attachment.
+                if not fresh_media and self._media_status_pending(current or ''):
+                    waiting_media = True
                 if not fresh_media and re.search(r"(?:^|\n)\s*(?:I(?:'m| am)\s+)?(?:generating|rendering|processing)\s+(?:your\s+)?(?:video|image)|(?:^|\n)\s*đang\s+(?:tạo|dựng).{0,30}(?:video|ảnh)|正在生成|生成中", current or '', re.I):
                     waiting_media = True
             if waiting_media or ((not current or (count <= base_agent and current == base_text)) and not fresh_media):
@@ -1300,7 +1415,8 @@ class MuseEngine:
                 time.sleep(0.15)
                 if self.page.js("document.readyState==='complete' && !!document.querySelector('textarea')"): break
             else: raise MuseGenerationError("Không mở lại được hội thoại chuỗi cảnh")
-            self._wait_ws_ready(self.page)
+            if not self._wait_ws_ready(self.page):
+                raise MuseGenerationError("Không kết nối được hội thoại Muse; chưa gửi prompt")
             time.sleep(1)
             if str(self.page.js('window.location.href') or '').split('?')[0].rstrip('/') != thread_url.split('?')[0].rstrip('/'):
                 raise MuseGenerationError("Muse không mở đúng hội thoại chuỗi; chưa gửi cảnh mới")

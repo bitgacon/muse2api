@@ -1,10 +1,11 @@
 {
-  "version": "1.6.8",
-  "updated_at": "2026-10-20",
-  "repo": "https://github.com/czg86389-hub/muse2api",
+  "version": "1.6.9",
+  "updated_at": "2026-11-03",
+  "repo": "https://github.com/bitgacon/muse2api",
   "highlights": [
-    "Chọn tài khoản tạo ảnh/video và chat; nhiều lô chạy song song theo tài khoản",
-    "Nhật ký, thư viện và tạo lại phân biệt tài khoản; thư mục riêng cho từng tài khoản",
-    "Đính kèm ảnh và tài liệu MD/TXT/CSV/Excel/PDF/DOCX"
-  ]
+    "Chỉ gửi khi workspace kết nối và ô nhập sẵn sàng; báo lỗi giao tin không được xác nhận",
+    "Chờ video xuất hiện muộn cả trong tạo video và chat; giữ hội thoại/tài khoản Studio",
+    "Cookie phụ không chặn nhập tài khoản; extension tiếng Việt 1.0.2"
+  ],
+  "upstream_commit": "1cd01682533dbf2c015fa879a8dc09534b50b4a3"
 }
